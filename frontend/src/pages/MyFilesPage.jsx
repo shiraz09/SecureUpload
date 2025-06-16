@@ -21,9 +21,35 @@ export default function MyFilesPage() {
       console.log('All files from API:', allFiles);
       
       // Filter out malicious files or files with no URL (meaning they weren't uploaded to Cloudinary)
-      const cleanFiles = allFiles.filter(file => 
-        file.verdict === 'clean' && file.url !== null
-      );
+      // Also ensure all files have timestamps, but preserve original timestamps when available
+      const cleanFiles = allFiles
+        .filter(file => file.verdict === 'clean' && file.url !== null)
+        .map(file => {
+          // Extract created_at from Cloudinary URL if available
+          let timestamp = file.timestamp;
+          
+          if (!timestamp) {
+            // Try to extract timestamp from file ID or URL
+            // Cloudinary URLs contain version which is a timestamp
+            if (file.url) {
+              // Extract version from URL (typically a timestamp)
+              const versionMatch = file.url.match(/\/v(\d+)\//);
+              if (versionMatch && versionMatch[1]) {
+                timestamp = parseInt(versionMatch[1]) * 1000; // Convert to milliseconds
+              }
+            }
+            
+            // If still no timestamp, use current time as fallback
+            if (!timestamp) {
+              timestamp = Date.now();
+            }
+          }
+          
+          return {
+            ...file,
+            timestamp
+          };
+        });
       
       setFiles(cleanFiles);
       console.log('Clean files to display:', cleanFiles);

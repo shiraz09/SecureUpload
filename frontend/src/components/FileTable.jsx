@@ -7,6 +7,34 @@ export default function FileTable({ files, onDelete, showDeleteButton = false })
     );
   }
 
+  // Function to format timestamp to display date and time
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return 'N/A';
+    
+    try {
+      const date = new Date(timestamp);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return 'N/A';
+      }
+      
+      // Format: "DD/MM/YYYY at HH:MM:SS"
+      return date.toLocaleString(undefined, {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+    } catch (err) {
+      console.error('Error formatting timestamp:', err);
+      return 'N/A';
+    }
+  };
+
   // Function to handle direct download instead of relying on browser behavior
   const handleDownload = async (url, fileName) => {
     try {
@@ -43,6 +71,7 @@ export default function FileTable({ files, onDelete, showDeleteButton = false })
         <thead className="bg-gray-50">
           <tr>
             <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">File Name</th>
+            <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Upload Date & Time</th>
             <th className="px-6 py-4 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
@@ -55,6 +84,9 @@ export default function FileTable({ files, onDelete, showDeleteButton = false })
               <tr key={f.id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="text-sm font-medium text-gray-900">{f.originalName}</div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="text-sm text-gray-500">{formatTimestamp(f.timestamp)}</div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <div className="flex justify-end space-x-2">

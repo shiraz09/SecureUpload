@@ -44,9 +44,13 @@ export const useApiService = () => {
       const formData = new FormData();
       formData.append('file', file);
       
-      if (metadata) {
-        formData.append('metadata', JSON.stringify(metadata));
-      }
+      // Add timestamp to metadata with the exact current time
+      const enhancedMetadata = {
+        ...metadata,
+        timestamp: Date.now() // Use current timestamp for exact upload time
+      };
+      
+      formData.append('metadata', JSON.stringify(enhancedMetadata));
       
       return fetchWithAuth('/files', {
         method: 'POST',

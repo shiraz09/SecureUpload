@@ -62,7 +62,8 @@ export default function FileUpload({ onUploaded }) {
           id: `local-${Date.now()}`, // Create a unique ID
           originalName: file.name,
           url: null, // No URL since it wasn't uploaded
-          verdict: 'malicious'
+          verdict: 'malicious',
+          timestamp: Date.now() // Add timestamp
         };
         
         // Send to the parent component to handle as suspicious
@@ -93,16 +94,22 @@ export default function FileUpload({ onUploaded }) {
         // Use our API service instead of direct fetch
         const responseData = await api.uploadFile(file);
         
+        // Ensure the response includes a timestamp
+        const responseWithTimestamp = {
+          ...responseData,
+          timestamp: Date.now() // Add current timestamp to ensure uniqueness
+        };
+        
         setProgress(100);
         
         // Update toast based on verdict
-        if (responseData.verdict === 'clean') {
+        if (responseWithTimestamp.verdict === 'clean') {
           toast.success('File verified as safe', { id: uploadToastId });
         } else {
           toast.error('Warning: File may be malicious', { id: uploadToastId });
         }
         
-        onUploaded(responseData);
+        onUploaded(responseWithTimestamp);
         setFile(null); // Clear the file input after successful upload
       } catch (apiError) {
         console.error('Upload API error:', apiError);

@@ -48,7 +48,13 @@ export default function UploadPage() {
       if (storedCleanFiles && storedCleanTime) {
         const timeDiff = now - parseInt(storedCleanTime);
         if (timeDiff < fifteenMinutesInMs) {
-          setCleanFiles(JSON.parse(storedCleanFiles));
+          // Parse files and ensure each has its own timestamp
+          const files = JSON.parse(storedCleanFiles);
+          setCleanFiles(files.map(file => ({
+            ...file,
+            // Preserve original timestamp or create one if missing
+            timestamp: file.timestamp || Date.now()
+          })));
         } else {
           localStorage.removeItem(keys.cleanFiles);
           localStorage.removeItem(keys.cleanTime);
@@ -59,7 +65,13 @@ export default function UploadPage() {
       if (storedSuspiciousFiles && storedSuspiciousTime) {
         const timeDiff = now - parseInt(storedSuspiciousTime);
         if (timeDiff < fifteenMinutesInMs) {
-          setSuspiciousFiles(JSON.parse(storedSuspiciousFiles));
+          // Parse files and ensure each has its own timestamp
+          const files = JSON.parse(storedSuspiciousFiles);
+          setSuspiciousFiles(files.map(file => ({
+            ...file,
+            // Preserve original timestamp or create one if missing
+            timestamp: file.timestamp || Date.now()
+          })));
         } else {
           localStorage.removeItem(keys.suspiciousFiles);
           localStorage.removeItem(keys.suspiciousTime);
@@ -74,21 +86,27 @@ export default function UploadPage() {
   const handleNewUpload = (newFile) => {
     if (!userId) return;
     
+    // Ensure file has a timestamp
+    const fileWithTimestamp = {
+      ...newFile,
+      timestamp: newFile.timestamp || Date.now()
+    };
+    
     // Always check verdict and URL to determine if file is malicious
     // A file is malicious if: 
     // 1. It has a 'malicious' verdict OR
     // 2. It has no URL (which means backend blocked it)
-    if (newFile.verdict === 'malicious' || !newFile.url) {
+    if (fileWithTimestamp.verdict === 'malicious' || !fileWithTimestamp.url) {
       // Handle suspicious file
-      const updatedSuspicious = [newFile, ...suspiciousFiles];
+      const updatedSuspicious = [fileWithTimestamp, ...suspiciousFiles];
       setSuspiciousFiles(updatedSuspicious);
       saveSuspiciousFilesToStorage(updatedSuspicious);
-      toast.error(`File "${newFile.originalName}" detected as potentially malicious!`, {
+      toast.error(`File "${fileWithTimestamp.originalName}" detected as potentially malicious!`, {
         duration: 5000,
       });
     } else {
       // Handle clean file
-      const updatedClean = [newFile, ...cleanFiles];
+      const updatedClean = [fileWithTimestamp, ...cleanFiles];
       setCleanFiles(updatedClean);
       saveCleanFilesToStorage(updatedClean);
     }
