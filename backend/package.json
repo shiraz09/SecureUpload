@@ -1,0 +1,46 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "set NODE_ENV=test&& jest",
+    "dev": "nodemon server.js",
+    "start": "node server.js"
+  },
+  "type": "module",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@clerk/clerk-sdk-node": "^4.13.23",
+    "axios": "^1.10.0",
+    "cloudinary": "^2.6.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "mime-types": "^3.0.1",
+    "multer": "^2.0.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.27.4",
+    "@babel/preset-env": "^7.27.2",
+    "@jest/globals": "^30.0.0",
+    "babel-jest": "^30.0.0",
+    "jest": "^30.0.0",
+    "jest-mock-extended": "^4.0.0",
+    "nodemon": "^3.1.10"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "transform": {
+      "^.+\\.js$": "babel-jest"
+    },
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "transformIgnorePatterns": [
+      "node_modules/(?!(esm-module-name)/)"
+    ]
+  }
+}
