@@ -7,7 +7,7 @@ import uploadRoutes from './routes/uploadRoutes.js';
 dotenv.config();
 const app = express();
 
-// Set Clerk secret key from environment variables
+// _Set Clerk secret key from environment variables
 const clerkSecretKey = process.env.CLERK_SECRET_KEY;
 if (!clerkSecretKey) {
   console.error('CLERK_SECRET_KEY is missing in environment variables');
