@@ -11,6 +11,7 @@ export default function MyFilesPage() {
   const [deleting, setDeleting] = useState(false);
   const { isLoaded: authLoaded } = useAuth();
   const api = useApiService();
+  const { userId } = useAuth();
 
   const fetchFiles = async () => {
     if (!authLoaded) return;
@@ -21,26 +22,30 @@ export default function MyFilesPage() {
       console.log('All files from API:', allFiles);
       
       // Filter out malicious files or files with no URL (meaning they weren't uploaded to Cloudinary)
-      // Also ensure all files have timestamps, but preserve original timestamps when available
       const cleanFiles = allFiles
         .filter(file => file.verdict === 'clean' && file.url !== null)
         .map(file => {
-          // Extract created_at from Cloudinary URL if available
+          // Extract timestamp from Cloudinary URL if available
           let timestamp = file.timestamp;
           
           if (!timestamp) {
-            // Try to extract timestamp from file ID or URL
-            // Cloudinary URLs contain version which is a timestamp
+            // Try to extract timestamp from file ID or URL (Cloudinary URLs contain version which is a timestamp)
             if (file.url) {
-              // Extract version from URL (typically a timestamp)
               const versionMatch = file.url.match(/\/v(\d+)\//);
               if (versionMatch && versionMatch[1]) {
                 timestamp = parseInt(versionMatch[1]) * 1000; // Convert to milliseconds
               }
             }
             
-            // If still no timestamp, use current time as fallback
-            if (!timestamp) {
+            // If still no timestamp, use creation date from ID or current time
+            if (!timestamp && file.id) {
+              const uuidTimestamp = file.id.split('-')[0];
+              if (uuidTimestamp && !isNaN(Number(uuidTimestamp))) {
+                timestamp = Number(uuidTimestamp);
+              } else {
+                timestamp = Date.now(); // Fallback to current time
+              }
+            } else if (!timestamp) {
               timestamp = Date.now();
             }
           }
@@ -70,10 +75,63 @@ export default function MyFilesPage() {
   // Function to remove a file from localStorage if it exists there
   const removeFromLocalStorage = (fileId) => {
     try {
-      // Check if the file exists in localStorage's recently uploaded files
-      const storedFilesStr = localStorage.getItem('recentlyUploadedCleanFiles');
-      if (storedFilesStr) {
-        const storedFiles = JSON.parse(storedFilesStr);
+      // Check for user-specific localStorage
+      if (userId) {
+        // User-specific keys
+        const userCleanFilesKey = `user_${userId}_recentlyUploadedCleanFiles`;
+        const userCleanTimeKey = `user_${userId}_recentlyUploadedCleanFilesTime`;
+        const userSuspiciousFilesKey = `user_${userId}_recentlyUploadedSuspiciousFiles`;
+        const userSuspiciousTimeKey = `user_${userId}_recentlyUploadedSuspiciousFilesTime`;
+        
+        // Check clean files
+        const storedUserCleanFilesStr = localStorage.getItem(userCleanFilesKey);
+        if (storedUserCleanFilesStr) {
+          const storedFiles = JSON.parse(storedUserCleanFilesStr);
+          const fileExists = storedFiles.some(file => file.id === fileId);
+          
+          if (fileExists) {
+            // Remove the file from the array
+            const updatedFiles = storedFiles.filter(file => file.id !== fileId);
+            
+            // Update localStorage or remove if empty
+            if (updatedFiles.length > 0) {
+              localStorage.setItem(userCleanFilesKey, JSON.stringify(updatedFiles));
+            } else {
+              localStorage.removeItem(userCleanFilesKey);
+              localStorage.removeItem(userCleanTimeKey);
+            }
+            
+            console.log(`File ${fileId} removed from user-specific clean localStorage`);
+          }
+        }
+        
+        // Check suspicious files
+        const storedUserSuspiciousFilesStr = localStorage.getItem(userSuspiciousFilesKey);
+        if (storedUserSuspiciousFilesStr) {
+          const storedFiles = JSON.parse(storedUserSuspiciousFilesStr);
+          const fileExists = storedFiles.some(file => file.id === fileId);
+          
+          if (fileExists) {
+            // Remove the file from the array
+            const updatedFiles = storedFiles.filter(file => file.id !== fileId);
+            
+            // Update localStorage or remove if empty
+            if (updatedFiles.length > 0) {
+              localStorage.setItem(userSuspiciousFilesKey, JSON.stringify(updatedFiles));
+            } else {
+              localStorage.removeItem(userSuspiciousFilesKey);
+              localStorage.removeItem(userSuspiciousTimeKey);
+            }
+            
+            console.log(`File ${fileId} removed from user-specific suspicious localStorage`);
+          }
+        }
+      }
+      
+      // Also check legacy localStorage (for backwards compatibility)
+      const storedCleanFilesStr = localStorage.getItem('recentlyUploadedCleanFiles');
+      if (storedCleanFilesStr) {
+        const storedFiles = JSON.parse(storedCleanFilesStr);
         
         // Check if the file with the given ID exists in localStorage
         const fileExists = storedFiles.some(file => file.id === fileId);
@@ -90,11 +148,11 @@ export default function MyFilesPage() {
             localStorage.removeItem('recentlyUploadedCleanFilesTime');
           }
           
-          console.log(`File ${fileId} removed from localStorage`);
-          return true;
+          console.log(`File ${fileId} removed from legacy localStorage`);
         }
       }
-      return false;
+      
+      return true;
     } catch (err) {
       console.error('Error removing file from localStorage:', err);
       return false;
@@ -166,9 +224,18 @@ export default function MyFilesPage() {
           // Clear the files state
           setFiles([]);
           
-          // Clear localStorage of all clean files
+          // Clear both legacy and user-specific localStorage
           localStorage.removeItem('recentlyUploadedCleanFiles');
           localStorage.removeItem('recentlyUploadedCleanFilesTime');
+          
+          // Clear user-specific localStorage if userId is available
+          if (userId) {
+            localStorage.removeItem(`user_${userId}_recentlyUploadedCleanFiles`);
+            localStorage.removeItem(`user_${userId}_recentlyUploadedCleanFilesTime`);
+            localStorage.removeItem(`user_${userId}_recentlyUploadedSuspiciousFiles`);
+            localStorage.removeItem(`user_${userId}_recentlyUploadedSuspiciousFilesTime`);
+            console.log('Cleared user-specific localStorage for file lists');
+          }
           
           return true;
         } finally {

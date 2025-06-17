@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import { useApiService } from '../utils/api';
 
@@ -7,6 +7,27 @@ export default function FileUpload({ onUploaded }) {
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const api = useApiService();
+
+  // Add navigation warning when upload is in progress
+  useEffect(() => {
+    // Define function to handle beforeunload event
+    const handleBeforeUnload = (e) => {
+      if (isUploading) {
+        // Standard way to show confirmation dialog before leaving page
+        const message = 'File upload is in progress. Leaving this page will cancel the upload. Are you sure?';
+        e.returnValue = message; // Required for Chrome
+        return message; // For other browsers
+      }
+    };
+    
+    // Add event listener for page navigation
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    // Clean up by removing event listener
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isUploading]);
 
   // Function to check if a file has a known malicious pattern
   const checkMaliciousPatterns = (file) => {
@@ -81,6 +102,15 @@ export default function FileUpload({ onUploaded }) {
           color: '#fff',
         }
       });
+      
+      // Also show a warning toast about not navigating away
+      toast.error(
+        'Please do not navigate away from this page until the upload is complete.',
+        { 
+          duration: 5000,
+          icon: '⚠️'
+        }
+      );
       
       // Simulate progress during scan since we don't have real progress events
       const progressInterval = setInterval(() => {
@@ -187,15 +217,34 @@ export default function FileUpload({ onUploaded }) {
       </div>
       
       {isUploading && (
-        <div className="space-y-2">
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div 
-              className="bg-indigo-600 h-2 rounded-full transition-all duration-300 ease-out"
-              style={{ width: `${progress}%` }}
-            ></div>
+        <>
+          <div className="space-y-2">
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-indigo-600 h-2 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${progress}%` }}
+              ></div>
+            </div>
+            <p className="text-xs text-gray-500 text-right">{progress}%</p>
           </div>
-          <p className="text-xs text-gray-500 text-right">{progress}%</p>
-        </div>
+          
+          {/* Upload warning message */}
+          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-yellow-800">Upload in Progress</h3>
+                <div className="mt-1 text-sm text-yellow-700">
+                  <p>Please do not leave or refresh this page until the upload is complete.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </form>
   );

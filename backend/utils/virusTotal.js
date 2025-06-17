@@ -1,10 +1,21 @@
 import axios from 'axios';
 import crypto from 'crypto';
-const VT = 'https://www.virustotal.com/api/v3';
+import FormData from 'form-data';
 
+const VT = 'https://www.virustotal.com/api/v3';
+const POLLING_INTERVAL_MS = 8000; // 8 seconds between polling requests (max 4 req/min for free tier)
+const MAX_RETRIES = 3;
+
+/**
+ * Scan a file using VirusTotal API
+ * @param {Buffer} buffer - File buffer
+ * @param {string} filename - Original filename
+ * @param {string} key - VirusTotal API key
+ * @returns {Promise<string>}
+ */
 export async function scanFile(buffer, filename, key) {
   try {
-    // Calculate SHA-256 hash of file first - we'll need this regardless
+    // Calculate SHA-256 hash of file first
     const hash = crypto.createHash('sha256').update(buffer).digest('hex');
     console.log(`File hash: ${hash}`);
     
@@ -16,7 +27,7 @@ export async function scanFile(buffer, filename, key) {
       });
       
       console.log('File already exists in VirusTotal, using existing analysis');
-      return response.data.data.id;
+      return hash; // Return hash as ID for later analysis
     } catch (hashError) {
       // If 404, file doesn't exist yet, so we'll upload it
       if (hashError.response && hashError.response.status === 404) {
@@ -24,159 +35,218 @@ export async function scanFile(buffer, filename, key) {
       } else {
         // For other errors with hash lookup, log but continue to try upload
         console.warn('Error checking file by hash:', hashError.message);
+        if (hashError.response && hashError.response.data) {
+          console.error('Full error details:', JSON.stringify(hashError.response.data));
+        }
       }
       
-      // Proceed with uploading the file
+      // Proceed with uploading the file using proper Node.js FormData
       const form = new FormData();
-      form.append('file', new Blob([buffer]), filename);
-      const { data } = await axios.post(`${VT}/files`, form, { headers: { 'x-apikey': key } });
+      form.append('file', buffer, {
+        filename,
+        contentType: 'application/octet-stream'
+      });
+      
+      const { data } = await axios.post(`${VT}/files`, form, { 
+        headers: { 
+          'x-apikey': key,
+          ...form.getHeaders() // Important for proper multipart/form-data
+        } 
+      });
+      
       console.log('File successfully uploaded to VirusTotal');
+      
+      // Return the ID from the upload response
       return data.data.id;
     }
   } catch (error) {
     // Handle specific error cases
     if (error.response) {
-      // Handle 409 conflict (file already exists)
-      if (error.response.status === 409) {
-        console.log('File already exists in VirusTotal (409 Conflict)');
-        
-        // Try to get file by hash again
-        try {
-          const hash = crypto.createHash('sha256').update(buffer).digest('hex');
-          const response = await axios.get(`${VT}/files/${hash}`, { 
-            headers: { 'x-apikey': key } 
-          });
-          
-          console.log('Successfully retrieved file by hash after 409 conflict');
-          return response.data.data.id;
-        } catch (hashError) {
-          console.error('Error getting file by hash after 409:', hashError.message);
-          throw hashError;
-        }
-      } 
-      // Handle 400 errors (bad request, often rate limiting or duplicate analysis)
-      else if (error.response.status === 400) {
-        console.log('VirusTotal API returned 400 error - likely rate limited or duplicate analysis');
-        
-        // Try to get file by hash as a fallback
-        try {
-          const hash = crypto.createHash('sha256').update(buffer).digest('hex');
-          const response = await axios.get(`${VT}/files/${hash}`, { 
-            headers: { 'x-apikey': key } 
-          });
-          
-          console.log('Successfully retrieved file by hash after 400 error');
-          return response.data.data.id;
-        } catch (hashError) {
-          console.error('Error getting file by hash after 400:', hashError.message);
-          
-          // Special handling for known files - if we have the hash, we can assume it's the same file
-          // This allows us to continue processing even if VirusTotal API is having issues
-          console.log('Using hash as ID for continued processing');
-          return `file-${hash}`; // Create a synthetic ID based on hash
-        }
+      // Handle rate limiting
+      if (error.response.status === 429) {
+        console.error('VirusTotal API rate limit exceeded:', error.response.status);
+        throw new Error('RATE_LIMIT_EXCEEDED');
+      }
+      
+      // Log the full error
+      console.error('API Error:', error.response.status);
+      if (error.response.data) {
+        console.error('Error details:', JSON.stringify(error.response.data));
       }
     }
     
     // For other errors, just throw them
-    console.error('Error with VirusTotal API:', error.message);
     throw error;
   }
 }
 
+/**
+ * Get analysis results for a file from VirusTotal
+ * @param {string} id - File ID
+ * @param {string} key - VirusTotal API key
+ * @returns {Promise<{attributes: {status: string, stats: {malicious: number, suspicious: number, harmless: number}}>>}
+ */
 export async function getAnalysis(id, key) {
   try {
-    // Check if this is a synthetic ID (for 400 error cases)
-    if (id.startsWith('file-')) {
-      const hash = id.replace('file-', '');
-      console.log(`Using synthetic ID with hash ${hash}, attempting to get file directly`);
-      
+    // First determine if we're dealing with a file hash or an analysis ID
+    // File hashes are typically 64 character hex strings
+    const isFileHash = /^[a-fA-F0-9]{64}$/.test(id);
+    
+    if (isFileHash) {
+      // If it's a file hash, first get the file info
+      console.log('Detected ID as file hash, getting file info first...');
       try {
-        const { data } = await axios.get(`${VT}/files/${hash}`, { 
+        const fileResponse = await axios.get(`${VT}/files/${id}`, { 
           headers: { 'x-apikey': key } 
         });
         
-        // If we can get the file, assume it's already been analyzed
-        console.log('Successfully retrieved file data by hash');
-        
-        // Create a synthetic analysis result - always mark as clean
-        return {
-          attributes: {
-            status: 'completed',
-            stats: {
-              malicious: 0, // Always clean for better user experience
-              suspicious: 0,
-              harmless: 1
+        // If we have analysis stats directly in the file response, use those
+        if (fileResponse.data.data.attributes?.last_analysis_stats) {
+          console.log('Found analysis stats in file response');
+          return {
+            attributes: {
+              status: 'completed',
+              stats: fileResponse.data.data.attributes.last_analysis_stats
             }
-          }
-        };
-      } catch (error) {
-        console.error('Error getting file by hash in getAnalysis:', error.message);
-        
-        // Return a default "clean" result to allow processing to continue
-        return {
-          attributes: {
-            status: 'completed',
-            stats: {
-              malicious: 0,
-              suspicious: 0,
-              harmless: 1
-            }
-          }
-        };
-      }
-    }
-    
-    // Normal path for regular IDs
-    try {
-      const { data } = await axios.get(`${VT}/analyses/${id}`, { headers: { 'x-apikey': key } });
-      
-      // If the analysis is still pending, mark it as completed and clean
-      // This improves user experience by not making them wait
-      if (data.data.attributes.status === 'queued' || data.data.attributes.status === 'pending') {
-        console.log('Analysis is still pending, but returning clean result for better UX');
-        return {
-          attributes: {
-            status: 'completed',
-            stats: {
-              malicious: 0,
-              suspicious: 0,
-              harmless: 1
-            }
-          }
-        };
-      }
-      
-      return data.data;
-    } catch (error) {
-      console.error('Error getting analysis from VirusTotal:', error.message);
-      
-      // For any error, return a clean result
-      console.log('Returning clean result due to API error');
-      return {
-        attributes: {
-          status: 'completed',
-          stats: {
-            malicious: 0,
-            suspicious: 0,
-            harmless: 1
-          }
+          };
         }
-      };
+        
+        // If we have a last_analysis_id, use that to get the detailed analysis
+        if (fileResponse.data.data.attributes?.last_analysis_id) {
+          console.log('Found analysis ID in file response, fetching analysis...');
+          const analysisId = fileResponse.data.data.attributes.last_analysis_id;
+          
+          // Now get the actual analysis with the correct ID
+          const analysisResponse = await axios.get(`${VT}/analyses/${analysisId}`, { 
+            headers: { 'x-apikey': key } 
+          });
+          
+          return {
+            attributes: {
+              status: 'completed',
+              stats: analysisResponse.data.data.attributes.stats
+            }
+          };
+        }
+        
+        // If no analysis stats or ID available, analysis is pending
+        console.log('No analysis results available yet');
+        throw new Error('ANALYSIS_PENDING');
+      } catch (fileError) {
+        // Handle rate limiting
+        if (fileError.response && fileError.response.status === 429) {
+          console.error('Rate limit exceeded while getting file info');
+          throw new Error('RATE_LIMIT_EXCEEDED');
+        }
+        
+        // Log the detailed error
+        console.error('Error getting file info from VirusTotal:', fileError.message);
+        if (fileError.response && fileError.response.data) {
+          console.error('Error details:', JSON.stringify(fileError.response.data));
+        }
+        
+        // Re-throw the error
+        throw fileError;
+      }
+    } else {
+      // This is a regular analysis ID, proceed normally
+      try {
+        // Try to get analysis results
+        const { data } = await axios.get(`${VT}/analyses/${id}`, { 
+          headers: { 'x-apikey': key } 
+        });
+        
+        // If analysis is completed, return the verdict
+        if (data.data.attributes.status === 'completed') {
+          return {
+            attributes: {
+              status: 'completed',
+              stats: data.data.attributes.stats
+            }
+          };
+        }
+        
+        // If analysis is still in progress, throw a special error
+        throw new Error('ANALYSIS_PENDING');
+      } catch (analysisError) {
+        // Handle rate limiting
+        if (analysisError.response && analysisError.response.status === 429) {
+          console.error('Rate limit exceeded while getting analysis');
+          throw new Error('RATE_LIMIT_EXCEEDED');
+        }
+        
+        // Analysis not available yet
+        if (analysisError.response && 
+            analysisError.response.status === 400 && 
+            analysisError.response.data?.error?.code === 'NotAvailableYet') {
+          console.log('Analysis not available yet');
+          throw new Error('ANALYSIS_PENDING');
+        }
+        
+        // Log the detailed error
+        console.error('Error getting analysis from VirusTotal:', analysisError.message);
+        if (analysisError.response && analysisError.response.data) {
+          console.error('Analysis error details:', JSON.stringify(analysisError.response.data));
+        }
+        
+        // Re-throw the error
+        throw analysisError;
+      }
     }
   } catch (error) {
-    console.error('Unexpected error in getAnalysis:', error.message);
+    // Re-throw specific error types
+    if (error.message === 'RATE_LIMIT_EXCEEDED' || 
+        error.message === 'ANALYSIS_PENDING') {
+      throw error;
+    }
     
-    // For any unexpected error, still return a clean result
-    return {
-      attributes: {
-        status: 'completed',
-        stats: {
-          malicious: 0,
-          suspicious: 0,
-          harmless: 1
-        }
-      }
-    };
+    // For any other error, log and throw
+    console.error('Unexpected error in getAnalysis:', error.message);
+    throw error;
   }
+}
+
+/**
+ * Wait for analysis to complete with proper polling
+ * @param {string} id - File ID
+ * @param {string} key - VirusTotal API key
+ * @param {number} maxRetries - Maximum number of retries
+ * @returns {Promise<{attributes: {status: string, stats: {malicious: number, suspicious: number, harmless: number}}>>}
+ */
+export async function waitForAnalysis(id, key, maxRetries = MAX_RETRIES) {
+  let retries = 0;
+  
+  while (retries < maxRetries) {
+    try {
+      // Wait before polling (wait first to avoid immediate rate limit)
+      if (retries > 0) {
+        console.log(`Waiting ${POLLING_INTERVAL_MS/1000}s before polling VirusTotal again...`);
+        await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL_MS));
+      }
+      
+      console.log(`Polling VirusTotal for analysis results (attempt ${retries + 1}/${maxRetries})...`);
+      const result = await getAnalysis(id, key);
+      
+      if (result.attributes.status === 'completed') {
+        console.log('Analysis completed successfully');
+        return result;
+      }
+      
+      retries++;
+    } catch (error) {
+      if (error.message === 'RATE_LIMIT_EXCEEDED') {
+        console.log('Rate limit hit, waiting longer before retry...');
+        await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL_MS * 2));
+        retries++;
+        continue;
+      }
+      
+      // For other errors, just throw
+      throw error;
+    }
+  }
+  
+  // If we've exhausted retries, we can't determine the verdict
+  console.log('Max retries reached, unable to determine file verdict');
+  throw new Error('ANALYSIS_TIMEOUT');
 }

@@ -50,70 +50,108 @@ export async function uploadHandler(req, res) {
 
     // VirusTotal scanning - try but don't let it block the upload if it fails
     let verdict = 'unknown';
-    try {
-      // VirusTotal
-      const vtId = await scanFile(file.buffer, publicId, process.env.VT_API_KEY);
+    let rateLimit = false;
+    let vtErrorDetails = null;
+
+          try {
+        // VirusTotal - scan file and get ID
+        const vtId = await scanFile(file.buffer, publicId, process.env.VT_API_KEY);
       
-      // If we got a valid ID back, proceed with analysis
       if (vtId) {
+        console.log('Got VirusTotal ID:', vtId);
         verdict = 'pending';
         let retryCount = 0;
-        const maxRetries = 3;
+        const maxRetries = 6;
+        const retryDelay = 12000;
         
+        // Poll for results with proper delay
         while (verdict === 'pending' && retryCount < maxRetries) {
           try {
+            if (retryCount > 0) {
+              // Wait before each retry
+              console.log(`Waiting ${retryDelay/1000}s before retry ${retryCount+1}...`);
+              await new Promise(r => setTimeout(r, retryDelay));
+            }
+            
             const r = await getAnalysis(vtId, process.env.VT_API_KEY);
             verdict = r.attributes.status === 'completed'
-              ? (r.attributes.stats.malicious > 0 ? 'malicious' : 'clean')
+              ? (r.attributes.stats.malicious > 0 ? 'malicious' : 
+                 r.attributes.stats.suspicious > 0 ? 'suspicious' : 'clean')
               : 'pending';
             
-            if (verdict === 'pending') {
-              await new Promise(r => setTimeout(r, 5000));
-              retryCount++;
-            }
+            retryCount++;
           } catch (analysisError) {
             console.error('Error getting analysis:', analysisError.message);
             
-            // If we've already retried enough, break out with a clean verdict
-            if (retryCount >= maxRetries - 1) {
-              console.log('Max retries reached for analysis, marking as clean');
-              verdict = 'clean';
+            // Check for specific error types
+            if (analysisError.message === 'RATE_LIMIT_EXCEEDED') {
+              console.log('Rate limit hit, marking as rate limited');
+              rateLimit = true;
+              verdict = 'suspicious'; // Default to suspicious when rate limited
               break;
             }
             
-            // Otherwise wait and retry
-            await new Promise(r => setTimeout(r, 5000));
+            if (analysisError.message === 'ANALYSIS_PENDING') {
+              console.log('Analysis still pending, will retry');
+              await new Promise(r => setTimeout(r, retryDelay));
+              retryCount++;
+              continue;
+            }
+            
+            // For other errors, just try again after a delay
+            if (retryCount >= maxRetries - 1) {
+              // If we've already retried enough, mark as suspicious
+              console.log('Max retries reached, marking as suspicious');
+              verdict = 'suspicious';
+              vtErrorDetails = analysisError.message;
+              break;
+            }
+            
+            await new Promise(r => setTimeout(r, retryDelay));
             retryCount++;
           }
         }
         
-        // If we still have pending after max retries, consider it clean
         if (verdict === 'pending') {
-          console.log('Analysis still pending after max retries, marking as clean');
-          verdict = 'clean';
+          // If still pending after all retries, mark as suspicious
+          console.log('Analysis still pending after max retries, marking as suspicious');
+          verdict = 'suspicious';
         }
       } else {
-        // If we didn't get an ID back, mark as clean
-        console.log('No valid ID returned from scanFile, marking as clean');
-        verdict = 'clean';
+        console.log('No valid ID returned from scanFile, marking as suspicious');
+        verdict = 'suspicious';
       }
     } catch (vtError) {
       console.error('VirusTotal scanning error:', vtError.message);
-      // Continue with upload despite VirusTotal error, mark as clean
-      verdict = 'clean';
+      
+      // Check for rate limit errors
+      if (vtError.message === 'RATE_LIMIT_EXCEEDED') {
+        console.log('VirusTotal API rate limit reached');
+        rateLimit = true;
+      }
+      
+      // Store error details for debugging
+      vtErrorDetails = vtError.message;
+      
+      // Always mark as suspicious when errors occur
+      verdict = 'suspicious';
     }
-    
-    // Log the final verdict
-    console.log(`File ${file.originalname} scan verdict: ${verdict}`);
 
-    // Don't upload to Cloudinary if the file is malicious
-    if (verdict === 'malicious') {
-      console.log(`File ${file.originalname} detected as malicious. Not uploading to Cloudinary.`);
+    // Log the final verdict
+    console.log(`File ${file.originalname} scan verdict: ${verdict}${rateLimit ? ' (rate limited)' : ''}`);
+    if (vtErrorDetails) {
+      console.log(`VirusTotal error details: ${vtErrorDetails}`);
+    }
+
+    // Don't upload to Cloudinary if the file is malicious or suspicious
+    if (verdict === 'malicious' || verdict === 'suspicious') {
+      console.log(`File ${file.originalname} detected as ${verdict}. Not uploading to Cloudinary.`);
       return res.json({
         id: publicId,
         originalName: file.originalname,
         url: null, // No URL since we didn't upload
-        verdict: 'malicious',
+        verdict: verdict,
+        rate_limited: rateLimit || false,
         userId
       });
     }

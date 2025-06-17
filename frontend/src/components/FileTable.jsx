@@ -19,16 +19,18 @@ export default function FileTable({ files, onDelete, showDeleteButton = false })
         return 'N/A';
       }
       
-      // Format: "DD/MM/YYYY at HH:MM:SS"
-      return date.toLocaleString(undefined, {
-        day: '2-digit',
-        month: '2-digit',
+      // Format: "Month DD, YYYY at HH:MM:SS" (English format)
+      const options = {
+        month: 'short', // 'Jan', 'Feb', etc.
+        day: 'numeric',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
-        hour12: false
-      });
+        hour12: true // Use AM/PM
+      };
+      
+      return date.toLocaleString('en-US', options);
     } catch (err) {
       console.error('Error formatting timestamp:', err);
       return 'N/A';
@@ -71,7 +73,7 @@ export default function FileTable({ files, onDelete, showDeleteButton = false })
         <thead className="bg-gray-50">
           <tr>
             <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">File Name</th>
-            <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Upload Date & Time</th>
+            <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Upload Time</th>
             <th className="px-6 py-4 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
